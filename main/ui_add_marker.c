@@ -9,6 +9,7 @@
 #include "lvgl.h"
 #include "esp_log.h"
 #include "zw_ble.h"
+#include "zw_api.h"
 #include "zw_wifi.h"
 
 static const char *TAG = "ui_add_marker";

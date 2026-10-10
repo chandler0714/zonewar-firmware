@@ -2,6 +2,9 @@
  * ZoneWar - 战队选择页面
  */
 #include "zw_ui.h"
+#include "zw_api.h"
+#include "zw_ble.h"
+#include "zw_nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "bsp_display.h"
