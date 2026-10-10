@@ -1,0 +1,47 @@
+name: Build ZoneWar Firmware
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware (ESP-IDF 5.5.3 / esp32c3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.3
+          target: esp32c3
+          command: idf.py build
+
+      - name: Merge firmware bins
+        run: |
+          cd build
+          # 生成合并后的完整固件
+          esptool.py --chip esp32c3 merge_bin -o ZoneWar-full.bin \
+            0x0 bootloader/bootloader.bin \
+            0x8000 partition_table/partition-table.bin \
+            0x10000 ZoneWar.bin
+          ls -lh ZoneWar-full.bin ZoneWar.bin
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZoneWar-firmware
+          path: |
+            build/ZoneWar-full.bin
+            build/ZoneWar.bin
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+          if-no-files-found: error
