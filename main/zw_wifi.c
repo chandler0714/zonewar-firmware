@@ -8,6 +8,7 @@
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 
 static const char *TAG = "zw_wifi";
 
