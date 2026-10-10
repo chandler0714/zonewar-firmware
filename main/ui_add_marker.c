@@ -3,6 +3,8 @@
  * 通过 BLE 接收手机发来的 GPS 坐标
  */
 #include "zw_ui.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "bsp_display.h"
 #include "lvgl.h"
 #include "esp_log.h"

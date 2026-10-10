@@ -4,6 +4,8 @@
  */
 #include <stdio.h>
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
 #include "bsp_i2c.h"
 #include "bsp_display.h"

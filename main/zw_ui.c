@@ -2,6 +2,8 @@
  * ZoneWar - UI 管理模块
  */
 #include "zw_ui.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "bsp_display.h"
 #include "esp_log.h"
 #include "esp_timer.h"

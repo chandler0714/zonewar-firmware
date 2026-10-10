@@ -3,6 +3,8 @@
  * 通过 BLE 接收手机发来的 Wi-Fi 名称和密码
  */
 #include "zw_ui.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "bsp_display.h"
 #include "lvgl.h"
 #include "esp_log.h"
@@ -97,7 +99,7 @@ void ui_wifi_config_enter(void) {
     // Bluetooth 图标
     lv_obj_t *icon = lv_label_create(s_scr);
     lv_label_set_text(icon, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_font(icon, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -40);
     
     // 状态
@@ -123,7 +125,7 @@ void ui_wifi_config_enter(void) {
     // 提示
     s_hint = lv_label_create(s_scr);
     lv_label_set_text(s_hint, "Open web page -> Connect -> Send Wi-Fi");
-    lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_11, 0);
+    lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_hint, lv_color_hex(0x666666), 0);
     lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -30);
     

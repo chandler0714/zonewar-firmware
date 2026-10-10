@@ -2,6 +2,8 @@
  * ZoneWar - 已标记点列表页面
  */
 #include "zw_ui.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "bsp_display.h"
 #include "lvgl.h"
 #include "esp_log.h"
