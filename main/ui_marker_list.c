@@ -71,9 +71,9 @@ static void delete_marker_task(void *arg) {
             }
             g_zw.marker_count--;
             refresh_list();
-            lv_label_set_text(s_hint, LV_SYMBOL_OK " Deleted   ↑↓ Select   OK Delete");
+            lv_label_set_text(s_hint, "[OK] Deleted   Up/Down: Select   OK: Delete");
         } else {
-            lv_label_set_text(s_hint, LV_SYMBOL_CLOSE " Delete failed");
+            lv_label_set_text(s_hint, "[X] Delete failed");
         }
         s_deleting = false;
         bsp_lvgl_unlock();
@@ -122,7 +122,7 @@ void ui_marker_list_enter(void) {
     
     // 底部提示
     s_hint = lv_label_create(s_scr);
-    lv_label_set_text(s_hint, "↑↓ Select   OK Delete   Long-press Back");
+    lv_label_set_text(s_hint, "Up/Down: Select   OK: Delete   Long OK: Back");
     lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_hint, lv_color_hex(0x666666), 0);
     lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -15);

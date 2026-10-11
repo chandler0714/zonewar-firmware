@@ -73,7 +73,7 @@ void ui_capture_enter(void) {
     
     // 底部提示
     lv_obj_t *bottom = lv_label_create(s_scr);
-    lv_label_set_text(bottom, "↑↓ Select   OK Confirm");
+    lv_label_set_text(bottom, "Up/Down: Select   OK: Confirm");
     lv_obj_set_style_text_font(bottom, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(bottom, lv_color_hex(0x666666), 0);
     lv_obj_align(bottom, LV_ALIGN_BOTTOM_MID, 0, -15);

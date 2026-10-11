@@ -46,9 +46,10 @@ static void startup_task(void *arg) {
     // 初始化 Wi-Fi
     zw_wifi_init();
     
-    // 初始化 BLE（不启动广播）
+    // 初始化 BLE 并启动广播（随时可接收手机坐标）
     zw_ble_init();
     zw_ble_set_device_info(g_zw.config.device_id, g_zw.config.team);
+    zw_ble_start_advertising();
     
     // 初始化 API
     zw_api_init(g_zw.config.server_url);

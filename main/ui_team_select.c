@@ -138,7 +138,7 @@ void ui_team_select_enter(void) {
     
     // 状态提示
     s_status = lv_label_create(s_scr);
-    lv_label_set_text(s_status, "↑↓ Select   OK Join");
+    lv_label_set_text(s_status, "Up/Down: Select   OK: Join");
     lv_obj_set_style_text_font(s_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_status, lv_color_hex(0xaaaaaa), 0);
     lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -30);

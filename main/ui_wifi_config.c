@@ -39,7 +39,7 @@ static void wifi_connect_task(void *arg) {
         char buf[64];
         snprintf(buf, sizeof(buf), "SSID: %s", cred->ssid);
         lv_label_set_text(s_ssid_label, buf);
-        lv_label_set_text(s_status, LV_SYMBOL_WIFI " Connecting...");
+        lv_label_set_text(s_status, ">> Connecting...");
         lv_obj_set_style_text_color(s_status, lv_color_hex(0xffd93d), 0);
         bsp_lvgl_unlock();
     }
@@ -59,7 +59,7 @@ static void wifi_connect_task(void *arg) {
     
     if (bsp_lvgl_lock(200)) {
         if (err == ESP_OK) {
-            lv_label_set_text(s_status, LV_SYMBOL_OK " Connected!");
+            lv_label_set_text(s_status, "[OK] Connected!");
             lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
             vTaskDelay(pdMS_TO_TICKS(1000));
             
@@ -69,7 +69,7 @@ static void wifi_connect_task(void *arg) {
                 zw_ui_switch_page(ZW_PAGE_TEAM_SELECT);
             }
         } else {
-            lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Connect failed");
+            lv_label_set_text(s_status, "[X] Connect failed");
             lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
             lv_label_set_text(s_hint, "Check password and retry");
             
@@ -172,10 +172,11 @@ void ui_wifi_config_enter(void) {
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
     
-    // WiFi 图标
+    // WiFi 图标（用 ASCII 代替 LV_SYMBOL）
     lv_obj_t *icon = lv_label_create(s_scr);
-    lv_label_set_text(icon, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
+    lv_label_set_text(icon, "WiFi");
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_color(icon, lv_color_hex(0x4ecdc4), 0);
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -50);
     
     // 热点名称
@@ -288,7 +289,7 @@ void ui_wifi_config_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
             
             esp_err_t err = zw_wifi_connect(g_zw.config.wifi_ssid, g_zw.config.wifi_password);
             if (err == ESP_OK) {
-                lv_label_set_text(s_status, LV_SYMBOL_OK " Connected!");
+                lv_label_set_text(s_status, "[OK] Connected!");
                 lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 
@@ -298,7 +299,7 @@ void ui_wifi_config_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
                     zw_ui_switch_page(ZW_PAGE_TEAM_SELECT);
                 }
             } else {
-                lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Connect failed");
+                lv_label_set_text(s_status, "[X] Connect failed");
                 lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
                 // 重新开启配网
                 zw_ble_start_advertising();

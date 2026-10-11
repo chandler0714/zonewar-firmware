@@ -33,9 +33,9 @@ static void coord_received_cb(zw_coord_t coord) {
         char buf[64];
         snprintf(buf, sizeof(buf), "%.4f, %.4f", coord.lat, coord.lng);
         lv_label_set_text(s_coord, buf);
-        lv_label_set_text(s_status, LV_SYMBOL_OK " Coords received");
+        lv_label_set_text(s_status, "[OK] Coords received");
         lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
-        lv_label_set_text(s_hint, "OK: Upload   ↑↓: Back");
+        lv_label_set_text(s_hint, "OK: Upload   Up/Down: Back");
         bsp_lvgl_unlock();
     }
 }
@@ -45,7 +45,7 @@ static void upload_marker_task(void *arg) {
     
     if (!zw_wifi_is_connected()) {
         if (bsp_lvgl_lock(100)) {
-            lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Wi-Fi not connected");
+            lv_label_set_text(s_status, "[X] Wi-Fi not connected");
             lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
             bsp_lvgl_unlock();
         }
@@ -66,11 +66,11 @@ static void upload_marker_task(void *arg) {
                 char buf[128];
                 char area_buf[32];
                 zw_format_area(new_area, area_buf, sizeof(area_buf));
-                snprintf(buf, sizeof(buf), LV_SYMBOL_OK " New Territory!\nArea: %s", area_buf);
+                snprintf(buf, sizeof(buf), "[OK] New Territory!\nArea: %s", area_buf);
                 lv_label_set_text(s_status, buf);
             } else {
                 char buf[64];
-                snprintf(buf, sizeof(buf), LV_SYMBOL_OK " Marker added (%d/3)", pending_count);
+                snprintf(buf, sizeof(buf), "[OK] Marker added (%d/3)", pending_count);
                 lv_label_set_text(s_status, buf);
             }
             lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
@@ -80,7 +80,7 @@ static void upload_marker_task(void *arg) {
             // 同步最新数据
             zw_ui_request_sync();
         } else {
-            lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Upload failed");
+            lv_label_set_text(s_status, "[X] Upload failed");
             lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
         }
         bsp_lvgl_unlock();
@@ -107,7 +107,7 @@ void ui_add_marker_enter(void) {
     
     // BLE 状态
     s_ble_status = lv_label_create(s_scr);
-    lv_label_set_text(s_ble_status, LV_SYMBOL_BLUETOOTH " Waiting for phone...");
+    lv_label_set_text(s_ble_status, "BLE: Ready - send GPS from phone");
     lv_obj_set_style_text_font(s_ble_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_ble_status, lv_color_hex(0x4ecdc4), 0);
     lv_obj_align(s_ble_status, LV_ALIGN_TOP_MID, 0, 65);
@@ -129,28 +129,26 @@ void ui_add_marker_enter(void) {
     
     // 状态
     s_status = lv_label_create(s_scr);
-    lv_label_set_text(s_status, "Connect phone via BLE");
+    lv_label_set_text(s_status, "Send location from ZoneWar app");
     lv_obj_set_style_text_font(s_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_status, lv_color_hex(0xaaaaaa), 0);
     lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 200);
     
     // 底部提示
     s_hint = lv_label_create(s_scr);
-    lv_label_set_text(s_hint, "↑↓ Back");
+    lv_label_set_text(s_hint, "Up/Down: Back");
     lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_hint, lv_color_hex(0x666666), 0);
     lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -15);
     
     lv_screen_load(s_scr);
     
-    // 注册坐标回调并启动 BLE 广播
+    // 注册坐标回调（BLE 已在启动时开启）
     zw_ble_set_coord_callback(coord_received_cb);
-    zw_ble_start_advertising();
 }
 
 void ui_add_marker_exit(void) {
-    // 停止 BLE 广播
-    zw_ble_stop_advertising();
+    // 注销坐标回调（BLE 广播保持开启）
     zw_ble_set_coord_callback(NULL);
     
     if (s_scr) {
