@@ -148,11 +148,6 @@ void ui_dashboard_enter(void) {
 void ui_dashboard_refresh(void) {
     if (!s_scr) return;
     
-    // 设备ID
-    char id_buf[32];
-    snprintf(id_buf, sizeof(id_buf), "ID: %s", g_zw.config.device_id);
-    lv_label_set_text(s_device_id, id_buf);
-    
     // 战队徽章
     if (g_zw.config.team == 1) {
         lv_label_set_text(s_team_badge, "RED TEAM");
