@@ -139,6 +139,9 @@ void ui_wifi_config_enter(void) {
     zw_ble_start_advertising();
     s_advertising = true;
     ESP_LOGI(TAG, "BLE advertising started for provisioning");
+    
+    // 测试：启动 SoftAP
+    zw_provision_start("test1234");
 }
 
 void ui_wifi_config_exit(void) {
