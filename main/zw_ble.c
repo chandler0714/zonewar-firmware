@@ -131,6 +131,47 @@ static int wifi_write_cb(uint16_t conn_handle, uint16_t attr_handle,
 static char s_scan_result[1024] = "";
 static volatile bool s_scan_in_progress = false;
 
+static void wifi_scan_task(void *pvParameters) {
+    (void)pvParameters;
+    
+    zw_wifi_ap_t aps[ZW_WIFI_SCAN_MAX_AP];
+    int count = zw_wifi_scan(aps, ZW_WIFI_SCAN_MAX_AP);
+    
+    // 格式化为紧凑 JSON
+    int offset = 0;
+    offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, "[");
+    
+    for (int i = 0; i < count && i < 15; i++) {
+        if (i > 0) {
+            offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, ",");
+        }
+        // 转义特殊字符
+        char safe_ssid[64];
+        int si = 0;
+        for (int j = 0; aps[i].ssid[j] && si < 60; j++) {
+            char c = aps[i].ssid[j];
+            if (c == '"' || c == '\\') {
+                safe_ssid[si++] = '\\';
+                safe_ssid[si++] = c;
+            } else if (c >= 0x20 && c < 0x7f) {
+                safe_ssid[si++] = c;
+            }
+        }
+        safe_ssid[si] = '\0';
+        
+        offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset,
+            "{\"s\":\"%s\",\"r\":%d,\"e\":%d}",
+            safe_ssid, aps[i].rssi, aps[i].encrypted ? 1 : 0);
+    }
+    
+    offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, "]");
+    s_scan_result[sizeof(s_scan_result) - 1] = '\0';
+    
+    ESP_LOGI(TAG, "Scan result: %d APs, json len=%d", count, (int)strlen(s_scan_result));
+    s_scan_in_progress = false;
+    vTaskDelete(NULL);
+}
+
 static int wifi_scan_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                               struct ble_gatt_access_ctxt *ctxt, void *arg) {
     (void)conn_handle;
@@ -155,46 +196,15 @@ static int wifi_scan_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         }
         
         s_scan_in_progress = true;
+        s_scan_result[0] = '\0';
         
         // 在后台任务中执行扫描（避免阻塞 BLE 栈）
-        xTaskCreatePinnedToCore([](void *pvParameters) {
-            zw_wifi_ap_t aps[ZW_WIFI_SCAN_MAX_AP];
-            int count = zw_wifi_scan(aps, ZW_WIFI_SCAN_MAX_AP);
-            
-            // 格式化为紧凑 JSON
-            int offset = 0;
-            offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, "[");
-            
-            for (int i = 0; i < count && i < 15; i++) {
-                if (i > 0) {
-                    offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, ",");
-                }
-                // 转义特殊字符
-                char safe_ssid[64];
-                int si = 0;
-                for (int j = 0; aps[i].ssid[j] && si < 60; j++) {
-                    char c = aps[i].ssid[j];
-                    if (c == '"' || c == '\\') {
-                        safe_ssid[si++] = '\\';
-                        safe_ssid[si++] = c;
-                    } else if (c >= 0x20 && c < 0x7f) {
-                        safe_ssid[si++] = c;
-                    }
-                }
-                safe_ssid[si] = '\0';
-                
-                offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset,
-                    "{\"s\":\"%s\",\"r\":%d,\"e\":%d}",
-                    safe_ssid, aps[i].rssi, aps[i].encrypted ? 1 : 0);
-            }
-            
-            offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, "]");
-            s_scan_result[sizeof(s_scan_result) - 1] = '\0';
-            
-            ESP_LOGI(TAG, "Scan result: %d APs, json len=%d", count, (int)strlen(s_scan_result));
+        if (xTaskCreatePinnedToCore(wifi_scan_task, "wifi_scan", 4096,
+                                    NULL, 5, NULL, 0) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create scan task");
             s_scan_in_progress = false;
-            vTaskDelete(NULL);
-        }, "wifi_scan", 4096, NULL, 5, NULL, 0);
+            strncpy(s_scan_result, "{\"error\":\"nomem\"}", sizeof(s_scan_result) - 1);
+        }
     }
     
     return 0;
