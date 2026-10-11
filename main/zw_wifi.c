@@ -126,3 +126,82 @@ zw_wifi_state_t zw_wifi_get_state(void) {
 bool zw_wifi_is_connected(void) {
     return s_state == ZW_WIFI_CONNECTED;
 }
+
+int zw_wifi_scan(zw_wifi_ap_t *aps, int max_aps) {
+    if (!aps || max_aps <= 0) return 0;
+    
+    ESP_LOGI(TAG, "Starting WiFi scan...");
+    
+    // 确保 WiFi 已初始化
+    wifi_mode_t mode;
+    esp_err_t err = esp_wifi_get_mode(&mode);
+    if (err != ESP_OK || mode == WIFI_MODE_NULL) {
+        // WiFi 未启动，先启动 STA 模式
+        if (s_sta_netif == NULL) {
+            s_sta_netif = esp_netif_create_default_wifi_sta();
+        }
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    // 配置扫描参数
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active.min = 0,
+        .scan_time.active.max = 120,
+    };
+    
+    // 开始扫描（阻塞）
+    err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(err));
+        return 0;
+    }
+    
+    // 获取扫描结果数量
+    uint16_t ap_num = 0;
+    err = esp_wifi_scan_get_ap_num(&ap_num);
+    if (err != ESP_OK || ap_num == 0) {
+        ESP_LOGI(TAG, "No AP found");
+        return 0;
+    }
+    
+    if (ap_num > max_aps) ap_num = max_aps;
+    
+    // 分配临时 buffer
+    wifi_ap_record_t *records = malloc(ap_num * sizeof(wifi_ap_record_t));
+    if (!records) {
+        ESP_LOGE(TAG, "Failed to alloc scan records");
+        return 0;
+    }
+    
+    uint16_t found = ap_num;
+    err = esp_wifi_scan_get_ap_records(&found, records);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get AP records: %s", esp_err_to_name(err));
+        free(records);
+        return 0;
+    }
+    
+    // 转换为我们的格式
+    int count = 0;
+    for (int i = 0; i < found && count < max_aps; i++) {
+        // 跳过空 SSID
+        if (records[i].ssid[0] == '\0') continue;
+        
+        strncpy(aps[count].ssid, (const char*)records[i].ssid, sizeof(aps[count].ssid) - 1);
+        aps[count].ssid[sizeof(aps[count].ssid) - 1] = '\0';
+        aps[count].rssi = records[i].rssi;
+        aps[count].encrypted = (records[i].authmode != WIFI_AUTH_OPEN);
+        count++;
+    }
+    
+    free(records);
+    ESP_LOGI(TAG, "Scan done: %d APs found", count);
+    return count;
+}

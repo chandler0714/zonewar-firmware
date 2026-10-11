@@ -18,3 +18,14 @@ esp_err_t zw_wifi_connect(const char *ssid, const char *password);
 esp_err_t zw_wifi_disconnect(void);
 zw_wifi_state_t zw_wifi_get_state(void);
 bool zw_wifi_is_connected(void);
+
+// WiFi 扫描
+#define ZW_WIFI_SCAN_MAX_AP  20
+typedef struct {
+    char ssid[33];
+    int8_t rssi;
+    bool encrypted;
+} zw_wifi_ap_t;
+
+// 开始扫描，返回扫描到的 AP 数量（阻塞式，约 2-3 秒）
+int zw_wifi_scan(zw_wifi_ap_t *aps, int max_aps);

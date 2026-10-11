@@ -3,6 +3,7 @@
  * GATT 服务接收手机 GPS 坐标
  */
 #include "zw_ble.h"
+#include "zw_wifi.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "host/ble_gap.h"
@@ -25,6 +26,7 @@ static const char *TAG = "zw_ble";
 #define ZW_BLE_CHAR_COORD_UUID     0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1
 #define ZW_BLE_CHAR_DEVICE_UUID    0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2
 #define ZW_BLE_CHAR_WIFI_UUID      0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3
+#define ZW_BLE_CHAR_WIFI_SCAN_UUID 0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4
 
 #define DEVICE_NAME "ZoneWar"
 
@@ -125,6 +127,92 @@ static int wifi_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
+// WiFi 扫描特征值：写入 "SCAN" 触发扫描，读取返回 JSON 结果
+static char s_scan_result[1024] = "";
+static volatile bool s_scan_in_progress = false;
+
+static int wifi_scan_write_cb(uint16_t conn_handle, uint16_t attr_handle,
+                              struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    
+    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) return 0;
+    
+    char buf[16] = {0};
+    int len = OS_MBUF_PKTLEN(ctxt->om);
+    if (len > sizeof(buf) - 1) len = sizeof(buf) - 1;
+    
+    int rc = os_mbuf_copydata(ctxt->om, 0, len, buf);
+    if (rc != 0) return BLE_ATT_ERR_UNLIKELY;
+    
+    ESP_LOGI(TAG, "WiFi scan command: %s", buf);
+    
+    if (strncmp(buf, "SCAN", 4) == 0) {
+        if (s_scan_in_progress) {
+            strncpy(s_scan_result, "{\"error\":\"busy\"}", sizeof(s_scan_result) - 1);
+            return 0;
+        }
+        
+        s_scan_in_progress = true;
+        
+        // 在后台任务中执行扫描（避免阻塞 BLE 栈）
+        xTaskCreatePinnedToCore([](void *pvParameters) {
+            zw_wifi_ap_t aps[ZW_WIFI_SCAN_MAX_AP];
+            int count = zw_wifi_scan(aps, ZW_WIFI_SCAN_MAX_AP);
+            
+            // 格式化为紧凑 JSON
+            int offset = 0;
+            offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, "[");
+            
+            for (int i = 0; i < count && i < 15; i++) {
+                if (i > 0) {
+                    offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, ",");
+                }
+                // 转义特殊字符
+                char safe_ssid[64];
+                int si = 0;
+                for (int j = 0; aps[i].ssid[j] && si < 60; j++) {
+                    char c = aps[i].ssid[j];
+                    if (c == '"' || c == '\\') {
+                        safe_ssid[si++] = '\\';
+                        safe_ssid[si++] = c;
+                    } else if (c >= 0x20 && c < 0x7f) {
+                        safe_ssid[si++] = c;
+                    }
+                }
+                safe_ssid[si] = '\0';
+                
+                offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset,
+                    "{\"s\":\"%s\",\"r\":%d,\"e\":%d}",
+                    safe_ssid, aps[i].rssi, aps[i].encrypted ? 1 : 0);
+            }
+            
+            offset += snprintf(s_scan_result + offset, sizeof(s_scan_result) - offset, "]");
+            s_scan_result[sizeof(s_scan_result) - 1] = '\0';
+            
+            ESP_LOGI(TAG, "Scan result: %d APs, json len=%d", count, (int)strlen(s_scan_result));
+            s_scan_in_progress = false;
+            vTaskDelete(NULL);
+        }, "wifi_scan", 4096, NULL, 5, NULL, 0);
+    }
+    
+    return 0;
+}
+
+static int wifi_scan_read_cb(uint16_t conn_handle, uint16_t attr_handle,
+                             struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    
+    if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) return 0;
+    
+    const char *result = s_scan_result[0] ? s_scan_result : "[]";
+    int rc = os_mbuf_append(ctxt->om, result, strlen(result));
+    return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
 static const struct ble_gatt_svc_def gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -144,6 +232,11 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .uuid = BLE_UUID128_DECLARE(ZW_BLE_CHAR_WIFI_UUID),
                 .access_cb = wifi_write_cb,
                 .flags = BLE_GATT_CHR_F_WRITE,
+            },
+            {
+                .uuid = BLE_UUID128_DECLARE(ZW_BLE_CHAR_WIFI_SCAN_UUID),
+                .access_cb = wifi_scan_write_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
             },
             { 0 }
         },
