@@ -1,6 +1,6 @@
 /*
  * ZoneWar - Wi-Fi 配网页面
- * 通过 BLE 接收手机发来的 Wi-Fi 名称和密码
+ * 支持两种方式：SoftAP（推荐，兼容所有手机）+ BLE（安卓 Chrome 可用）
  */
 #include "zw_ui.h"
 #include "freertos/FreeRTOS.h"
@@ -11,6 +11,7 @@
 #include "zw_wifi.h"
 #include "zw_ble.h"
 #include "zw_nvs.h"
+#include "zw_provision.h"
 
 static const char *TAG = "ui_wifi_cfg";
 
@@ -18,13 +19,15 @@ static lv_obj_t *s_scr = NULL;
 static lv_obj_t *s_status = NULL;
 static lv_obj_t *s_ssid_label = NULL;
 static lv_obj_t *s_hint = NULL;
+static lv_obj_t *s_ap_label = NULL;
 static bool s_advertising = false;
+static bool s_softap_started = false;
 
-// 收到 Wi-Fi 配置后的处理任务
-static void wifi_received_task(void *arg) {
+// 配网成功后的处理任务
+static void wifi_connect_task(void *arg) {
     zw_wifi_cred_t *cred = (zw_wifi_cred_t *)arg;
     
-    ESP_LOGI(TAG, "WiFi received: ssid=%s", cred->ssid);
+    ESP_LOGI(TAG, "WiFi connect: ssid=%s", cred->ssid);
     
     // 保存到 NVS
     zw_nvs_save_wifi(cred->ssid, cred->password);
@@ -36,9 +39,19 @@ static void wifi_received_task(void *arg) {
         char buf[64];
         snprintf(buf, sizeof(buf), "SSID: %s", cred->ssid);
         lv_label_set_text(s_ssid_label, buf);
-        lv_label_set_text(s_status, LV_SYMBOL_WIFI " Connecting Wi-Fi...");
+        lv_label_set_text(s_status, LV_SYMBOL_WIFI " Connecting...");
         lv_obj_set_style_text_color(s_status, lv_color_hex(0xffd93d), 0);
         bsp_lvgl_unlock();
+    }
+    
+    // 停止配网模式
+    if (s_softap_started) {
+        zw_provision_stop();
+        s_softap_started = false;
+    }
+    if (s_advertising) {
+        zw_ble_stop_advertising();
+        s_advertising = false;
     }
     
     // 尝试连接
@@ -50,20 +63,21 @@ static void wifi_received_task(void *arg) {
             lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
             vTaskDelay(pdMS_TO_TICKS(1000));
             
-            // 停止 BLE 广播
-            zw_ble_stop_advertising();
-            s_advertising = false;
-            
-            // 判断去哪个页面
             if (g_zw.config.team != ZW_TEAM_NONE) {
                 zw_ui_switch_page(ZW_PAGE_DASHBOARD);
             } else {
                 zw_ui_switch_page(ZW_PAGE_TEAM_SELECT);
             }
         } else {
-            lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Wi-Fi connect failed");
+            lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Connect failed");
             lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
             lv_label_set_text(s_hint, "Check password and retry");
+            
+            // 重新开启配网
+            zw_ble_start_advertising();
+            s_advertising = true;
+            zw_provision_start(zw_nvs_get_device_id());
+            s_softap_started = true;
         }
         bsp_lvgl_unlock();
     }
@@ -80,11 +94,48 @@ static void on_wifi_received(zw_wifi_cred_t cred) {
     if (!cred_copy) return;
     memcpy(cred_copy, &cred, sizeof(zw_wifi_cred_t));
     
-    xTaskCreate(wifi_received_task, "wifi_recv", 6144, cred_copy, 5, NULL);
+    xTaskCreate(wifi_connect_task, "wifi_conn", 6144, cred_copy, 5, NULL);
+}
+
+// 轮询 SoftAP 配网状态
+static void prov_poll_task(void *arg) {
+    (void)arg;
+    
+    while (s_softap_started) {
+        zw_prov_state_t state = zw_provision_get_state();
+        
+        if (state == ZW_PROV_SUCCESS) {
+            ESP_LOGI(TAG, "SoftAP provisioning success");
+            
+            zw_wifi_cred_t cred;
+            memset(&cred, 0, sizeof(cred));
+            strncpy(cred.ssid, zw_provision_get_ssid(), sizeof(cred.ssid) - 1);
+            // 密码由 provision 模块保存在 NVS，这里从 NVS 读
+            char pwd[64] = {0};
+            // 注意：provision 模块已经调用了 zw_nvs_save_wifi
+            // 所以直接从 NVS 加载
+            zw_config_t cfg;
+            memset(&cfg, 0, sizeof(cfg));
+            zw_nvs_load(&cfg);
+            strncpy(cred.password, cfg.wifi_password, sizeof(cred.password) - 1);
+            cred.valid = true;
+            
+            zw_wifi_cred_t *cred_copy = malloc(sizeof(zw_wifi_cred_t));
+            if (cred_copy) {
+                memcpy(cred_copy, &cred, sizeof(zw_wifi_cred_t));
+                xTaskCreate(wifi_connect_task, "wifi_conn", 6144, cred_copy, 5, NULL);
+            }
+            break;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    
+    vTaskDelete(NULL);
 }
 
 void ui_wifi_config_enter(void) {
-    ESP_LOGI(TAG, "Enter wifi config (BLE provisioning)");
+    ESP_LOGI(TAG, "Enter wifi config (SoftAP + BLE)");
     
     s_scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_scr, lv_color_hex(0x0a0a1a), 0);
@@ -94,20 +145,32 @@ void ui_wifi_config_enter(void) {
     lv_label_set_text(title, "Wi-Fi Setup");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_22, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
     
-    // Bluetooth 图标
+    // WiFi 图标
     lv_obj_t *icon = lv_label_create(s_scr);
     lv_label_set_text(icon, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
-    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -40);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -50);
+    
+    // 热点名称
+    s_ap_label = lv_label_create(s_scr);
+    char ap_name[32];
+    const char *dev_id = zw_nvs_get_device_id();
+    int id_len = strlen(dev_id);
+    const char *suffix = (id_len >= 4) ? (dev_id + id_len - 4) : dev_id;
+    snprintf(ap_name, sizeof(ap_name), "ZoneWar-%.4s", suffix);
+    lv_label_set_text(s_ap_label, ap_name);
+    lv_obj_set_style_text_font(s_ap_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_ap_label, lv_color_hex(0x667eea), 0);
+    lv_obj_align(s_ap_label, LV_ALIGN_CENTER, 0, -10);
     
     // 状态
     s_status = lv_label_create(s_scr);
-    lv_label_set_text(s_status, "Waiting for phone...");
-    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_16, 0);
+    lv_label_set_text(s_status, "Starting hotspot...");
+    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_status, lv_color_hex(0xffd93d), 0);
-    lv_obj_align(s_status, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_align(s_status, LV_ALIGN_CENTER, 0, 25);
     
     // SSID 显示
     s_ssid_label = lv_label_create(s_scr);
@@ -124,20 +187,39 @@ void ui_wifi_config_enter(void) {
     
     // 提示
     s_hint = lv_label_create(s_scr);
-    lv_label_set_text(s_hint, "Open web page -> Connect -> Send Wi-Fi");
-    lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(s_hint, lv_color_hex(0x666666), 0);
-    lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_label_set_text(s_hint, "Connect to Wi-Fi above, visit 192.168.4.1");
+    lv_obj_set_style_text_font(s_hint, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(s_hint, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_align(s_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_hint, 220);
+    lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -25);
     
     lv_screen_load(s_scr);
     
-    // 设置 Wi-Fi 配网回调
+    // 设置 BLE Wi-Fi 配网回调
     zw_ble_set_wifi_callback(on_wifi_received);
     
-    // 启动 BLE 广播
+    // 启动 BLE 广播（安卓用户可用）
     zw_ble_start_advertising();
     s_advertising = true;
-    ESP_LOGI(TAG, "BLE advertising started for provisioning");
+    
+    // 启动 SoftAP 配网（推荐，所有手机兼容）
+    esp_err_t err = zw_provision_start(dev_id);
+    if (err == ESP_OK) {
+        s_softap_started = true;
+        lv_label_set_text(s_status, "Hotspot ready!");
+        lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
+        
+        // 启动轮询任务
+        xTaskCreate(prov_poll_task, "prov_poll", 2048, NULL, 4, NULL);
+    } else {
+        // SoftAP 失败也没关系，还有 BLE
+        lv_label_set_text(s_status, "BLE mode only");
+        lv_obj_set_style_text_color(s_status, lv_color_hex(0xffd93d), 0);
+        lv_label_set_text(s_hint, "Use Android Chrome to connect");
+    }
+    
+    ESP_LOGI(TAG, "WiFi config page ready");
 }
 
 void ui_wifi_config_exit(void) {
@@ -147,19 +229,30 @@ void ui_wifi_config_exit(void) {
     }
     zw_ble_set_wifi_callback(NULL);
     
+    if (s_softap_started) {
+        zw_provision_stop();
+        s_softap_started = false;
+    }
+    
     if (s_scr) {
         lv_obj_delete(s_scr);
         s_scr = NULL;
         s_status = NULL;
         s_ssid_label = NULL;
         s_hint = NULL;
+        s_ap_label = NULL;
     }
 }
 
 void ui_wifi_config_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     if (btn == BSP_BTN_OK) {
-        // 如果已经有保存的 Wi-Fi，按 OK 可以直接尝试连接（跳过配网）
+        // 如果已经有保存的 Wi-Fi，按 OK 可以直接尝试连接
         if (g_zw.config.wifi_configured) {
+            // 先停止配网
+            if (s_softap_started) {
+                zw_provision_stop();
+                s_softap_started = false;
+            }
             if (s_advertising) {
                 zw_ble_stop_advertising();
                 s_advertising = false;
@@ -168,7 +261,6 @@ void ui_wifi_config_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
             lv_label_set_text(s_status, "Connecting saved Wi-Fi...");
             lv_obj_set_style_text_color(s_status, lv_color_hex(0xffd93d), 0);
             
-            // 直接尝试连接
             esp_err_t err = zw_wifi_connect(g_zw.config.wifi_ssid, g_zw.config.wifi_password);
             if (err == ESP_OK) {
                 lv_label_set_text(s_status, LV_SYMBOL_OK " Connected!");
@@ -183,14 +275,17 @@ void ui_wifi_config_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
             } else {
                 lv_label_set_text(s_status, LV_SYMBOL_CLOSE " Connect failed");
                 lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
-                // 重新开启 BLE 配网
+                // 重新开启配网
                 zw_ble_start_advertising();
                 s_advertising = true;
+                esp_err_t err2 = zw_provision_start(zw_nvs_get_device_id());
+                if (err2 == ESP_OK) {
+                    s_softap_started = true;
+                    lv_label_set_text(s_status, "Hotspot ready!");
+                    lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
+                    xTaskCreate(prov_poll_task, "prov_poll", 2048, NULL, 4, NULL);
+                }
             }
-        } else {
-            // 没配置过，刷新一下状态提示
-            lv_label_set_text(s_status, "Send Wi-Fi config from phone");
-            lv_obj_set_style_text_color(s_status, lv_color_hex(0xffd93d), 0);
         }
     }
 }
