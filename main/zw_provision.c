@@ -305,24 +305,24 @@ static const httpd_uri_t connect_uri = {
     .handler = connect_handler,
 };
 
-// captive portal 常用地址
-static esp_err_t captive_handler(httpd_req_t *req) {
-    // 重定向到根页面
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
+// 注册 captive portal 路由（iOS/Android 自动检测）
+static void register_captive_portal(httpd_handle_t server) {
+    // iOS / macOS
+    httpd_uri_t uri1 = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = root_handler};
+    httpd_register_uri_handler(server, &uri1);
+    
+    // Android
+    httpd_uri_t uri2 = {.uri = "/generate_204", .method = HTTP_GET, .handler = root_handler};
+    httpd_register_uri_handler(server, &uri2);
+    httpd_uri_t uri3 = {.uri = "/gen_204", .method = HTTP_GET, .handler = root_handler};
+    httpd_register_uri_handler(server, &uri3);
+    
+    // Windows
+    httpd_uri_t uri4 = {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = root_handler};
+    httpd_register_uri_handler(server, &uri4);
+    httpd_uri_t uri5 = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = root_handler};
+    httpd_register_uri_handler(server, &uri5);
 }
-
-static const httpd_uri_t captive_uris[] = {
-    {.uri = "/generate_204", .method = HTTP_GET, .handler = root_handler},
-    {.uri = "/gen_204", .method = HTTP_GET, .handler = root_handler},
-    {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = root_handler},
-    {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = root_handler},
-    {.uri = "/wifitest", .method = HTTP_GET, .handler = root_handler},
-    {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = root_handler},
-    {.uri = "/success.txt", .method = HTTP_GET, .handler = root_handler},
-};
 
 esp_err_t zw_provision_start(const char *device_id) {
     if (s_state != ZW_PROV_IDLE && s_state != ZW_PROV_FAILED) {
@@ -348,12 +348,18 @@ esp_err_t zw_provision_start(const char *device_id) {
     // 确保 WiFi 已初始化
     // 注意：zw_wifi_init 已经在主程序调用了
     
-    // 创建 AP 接口
+    // 创建 AP 和 STA 接口
     s_ap_netif = esp_netif_create_default_wifi_ap();
     if (!s_ap_netif) {
         ESP_LOGE(TAG, "Failed to create AP netif");
         s_state = ZW_PROV_IDLE;
         return ESP_FAIL;
+    }
+    
+    // 确保 STA netif 也存在（用于 WiFi 扫描和后续连接）
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    if (!sta_netif) {
+        ESP_LOGW(TAG, "STA netif may already exist (ok)");
     }
     
     // 配置 AP 模式
@@ -395,9 +401,7 @@ esp_err_t zw_provision_start(const char *device_id) {
     httpd_register_uri_handler(s_server, &connect_uri);
     
     // captive portal 路由
-    for (int i = 0; i < sizeof(captive_uris) / sizeof(captive_uris[0]); i++) {
-        httpd_register_uri_handler(s_server, &captive_uris[i]);
-    }
+    register_captive_portal(s_server);
     
     ESP_LOGI(TAG, "HTTP server started on 192.168.4.1");
     
