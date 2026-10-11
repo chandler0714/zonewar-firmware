@@ -48,6 +48,11 @@ esp_err_t zw_api_init(const char *server_url) {
 }
 
 static esp_err_t do_post(const char *path, const char *body) {
+    if (!s_server_url[0]) {
+        ESP_LOGE(TAG, "POST %s failed: server URL not configured", path);
+        return ESP_ERR_INVALID_STATE;
+    }
+    
     char url[256];
     snprintf(url, sizeof(url), "%s%s", s_server_url, path);
     
@@ -84,6 +89,11 @@ static esp_err_t do_post(const char *path, const char *body) {
 }
 
 static esp_err_t do_get(const char *path) {
+    if (!s_server_url[0]) {
+        ESP_LOGE(TAG, "GET %s failed: server URL not configured", path);
+        return ESP_ERR_INVALID_STATE;
+    }
+    
     char url[256];
     snprintf(url, sizeof(url), "%s%s", s_server_url, path);
     
