@@ -4,6 +4,7 @@ idf_component_register(
         "zw_nvs.c"
         "zw_wifi.c"
         "zw_ble.c"
+        "zw_provision.c"
         "zw_api.c"
         "zw_ui.c"
         "ui_team_select.c"
@@ -20,6 +21,7 @@ idf_component_register(
         esp_netif
         esp_event
         esp_http_client
+        esp_http_server
         esp_timer
         bt
         lvgl
