@@ -98,7 +98,26 @@ zw_page_t zw_ui_current_page(void) {
 }
 
 void zw_ui_dispatch_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
-    if (ev != BSP_BTN_CLICK) return; // 只处理单击
+    // 长按 OK：通用返回逻辑（子页面返回上一级）
+    if (ev == BSP_BTN_LONG && btn == BSP_BTN_OK) {
+        switch (s_current_page) {
+        case ZW_PAGE_MARKER_LIST:
+        case ZW_PAGE_ADD_MARKER:
+            zw_ui_switch_page(ZW_PAGE_CAPTURE);
+            return;
+        case ZW_PAGE_CAPTURE:
+            zw_ui_switch_page(ZW_PAGE_DASHBOARD);
+            return;
+        case ZW_PAGE_WIFI_CONFIG:
+            // 配网页长按返回不做处理（避免误操作）
+            return;
+        default:
+            return;
+        }
+    }
+    
+    // 单击事件分发给各页面
+    if (ev != BSP_BTN_CLICK) return;
     
     switch (s_current_page) {
     case ZW_PAGE_TEAM_SELECT: ui_team_select_key(btn, ev); break;
