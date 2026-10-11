@@ -38,17 +38,24 @@ jobs:
 
       - name: Create release zip
         run: |
-          cd build
-          zip -j ZoneWar-firmware.zip ZoneWar-full.bin ZoneWar.bin
+          sudo apt-get update && sudo apt-get install -y zip
+          ls -la build/
+          cd build && zip -j ZoneWar-firmware.zip ZoneWar-full.bin ZoneWar.bin
+          ls -lh ZoneWar-firmware.zip
 
       - name: Update latest release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest Build
-          files: build/ZoneWar-firmware.zip
-          make_latest: true
-          body: |
-            Auto-built firmware from commit ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 删除旧的 latest release 和 tag
+          gh release delete latest -y 2>/dev/null || true
+          git tag -d latest 2>/dev/null || true
+          git push origin :refs/tags/latest 2>/dev/null || true
+          
+          # 创建新的 release
+          gh release create latest \
+            --title "Latest Build" \
+            --notes "Auto-built firmware from commit ${{ github.sha }}
             - ZoneWar-full.bin: Full merged firmware (flash at 0x0)
-            - ZoneWar.bin: App firmware only (flash at 0x10000)
+            - ZoneWar.bin: App firmware only (flash at 0x10000)" \
+            build/ZoneWar-firmware.zip
