@@ -38,15 +38,20 @@ esp_err_t zw_nvs_load(zw_config_t *config) {
         // 第一次运行，返回默认值
         strncpy(config->device_id, s_device_id, ZW_DEVICE_ID_LEN - 1);
         config->team = ZW_TEAM_NONE;
-        // TODO: 修改为你的 Wi-Fi 名称和密码，并把 wifi_configured 改为 true
         strncpy(config->wifi_ssid, "YourWiFiSSID", sizeof(config->wifi_ssid) - 1);
         strncpy(config->wifi_password, "YourWiFiPassword", sizeof(config->wifi_password) - 1);
-        config->wifi_configured = false;  // 改为 true 启用自动连接
+        config->wifi_configured = false;
         strncpy(config->server_url, "http://47.84.88.8:5000", sizeof(config->server_url) - 1);
         return ESP_OK;
     }
     
+    // 先设默认值，NVS 中有值的会覆盖
     strncpy(config->device_id, s_device_id, ZW_DEVICE_ID_LEN - 1);
+    config->team = ZW_TEAM_NONE;
+    config->wifi_ssid[0] = '\0';
+    config->wifi_password[0] = '\0';
+    config->wifi_configured = false;
+    strncpy(config->server_url, "http://47.84.88.8:5000", sizeof(config->server_url) - 1);
     
     int32_t team = ZW_TEAM_NONE;
     nvs_get_i32(handle, "team", &team);
