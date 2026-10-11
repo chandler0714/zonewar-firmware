@@ -23,7 +23,7 @@ jobs:
         with:
           esp_idf_version: v5.5.3
           target: esp32c3
-          command: idf.py build && cd build && esptool.py --chip esp32c3 merge_bin -o ZoneWar-full.bin 0x0 bootloader/bootloader.bin 0x8000 partition_table/partition-table.bin 0x10000 ZoneWar.bin && ls -lh ZoneWar-full.bin ZoneWar.bin
+          command: idf.py build && cd build && esptool.py --chip esp32c3 merge_bin -o ZoneWar-full.bin 0x0 bootloader/bootloader.bin 0x8000 partition_table/partition-table.bin 0x10000 ZoneWar.bin && zip -j ZoneWar-firmware.zip ZoneWar-full.bin ZoneWar.bin && ls -lh ZoneWar-full.bin ZoneWar.bin ZoneWar-firmware.zip
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
@@ -32,16 +32,14 @@ jobs:
           path: |
             build/ZoneWar-full.bin
             build/ZoneWar.bin
+            build/ZoneWar-firmware.zip
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
           if-no-files-found: error
 
       - name: Create release zip
         run: |
-          ls -la build/
-          cd build
-          zip -j ZoneWar-firmware.zip ZoneWar-full.bin ZoneWar.bin
-          ls -lh ZoneWar-firmware.zip
+          ls -lh build/ZoneWar-firmware.zip
 
       - name: Update latest release
         env:
