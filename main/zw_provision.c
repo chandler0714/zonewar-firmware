@@ -307,21 +307,28 @@ static const httpd_uri_t connect_uri = {
 
 // 注册 captive portal 路由（iOS/Android 自动检测）
 static void register_captive_portal(httpd_handle_t server) {
+    httpd_uri_t uri;
+    memset(&uri, 0, sizeof(uri));
+    uri.method = HTTP_GET;
+    uri.handler = root_handler;
+    
     // iOS / macOS
-    httpd_uri_t uri1 = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = root_handler};
-    httpd_register_uri_handler(server, &uri1);
+    uri.uri = "/hotspot-detect.html";
+    httpd_register_uri_handler(server, &uri);
     
     // Android
-    httpd_uri_t uri2 = {.uri = "/generate_204", .method = HTTP_GET, .handler = root_handler};
-    httpd_register_uri_handler(server, &uri2);
-    httpd_uri_t uri3 = {.uri = "/gen_204", .method = HTTP_GET, .handler = root_handler};
-    httpd_register_uri_handler(server, &uri3);
+    uri.uri = "/generate_204";
+    httpd_register_uri_handler(server, &uri);
+    
+    uri.uri = "/gen_204";
+    httpd_register_uri_handler(server, &uri);
     
     // Windows
-    httpd_uri_t uri4 = {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = root_handler};
-    httpd_register_uri_handler(server, &uri4);
-    httpd_uri_t uri5 = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = root_handler};
-    httpd_register_uri_handler(server, &uri5);
+    uri.uri = "/ncsi.txt";
+    httpd_register_uri_handler(server, &uri);
+    
+    uri.uri = "/connecttest.txt";
+    httpd_register_uri_handler(server, &uri);
 }
 
 esp_err_t zw_provision_start(const char *device_id) {
@@ -384,7 +391,6 @@ esp_err_t zw_provision_start(const char *device_id) {
     
     // 启动 HTTP 服务器
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
-    http_config.max_uri_handlers = 16;
     
     if (httpd_start(&s_server, &http_config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -399,9 +405,6 @@ esp_err_t zw_provision_start(const char *device_id) {
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &scan_uri);
     httpd_register_uri_handler(s_server, &connect_uri);
-    
-    // captive portal 路由
-    register_captive_portal(s_server);
     
     ESP_LOGI(TAG, "HTTP server started on 192.168.4.1");
     
