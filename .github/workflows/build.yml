@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -35,3 +35,20 @@ jobs:
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
           if-no-files-found: error
+
+      - name: Create release zip
+        run: |
+          cd build
+          zip -j ZoneWar-firmware.zip ZoneWar-full.bin ZoneWar.bin
+
+      - name: Update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build
+          files: build/ZoneWar-firmware.zip
+          make_latest: true
+          body: |
+            Auto-built firmware from commit ${{ github.sha }}
+            - ZoneWar-full.bin: Full merged firmware (flash at 0x0)
+            - ZoneWar.bin: App firmware only (flash at 0x10000)
