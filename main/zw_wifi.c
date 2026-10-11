@@ -113,6 +113,66 @@ esp_err_t zw_wifi_connect(const char *ssid, const char *password) {
     }
 }
 
+esp_err_t zw_wifi_connect_sta_only(const char *ssid, const char *password) {
+    ESP_LOGI(TAG, "STA connect: %s (mode preserved)", ssid);
+    
+    if (s_state == ZW_WIFI_CONNECTED) {
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+    
+    s_retry_num = 0;
+    s_state = ZW_WIFI_CONNECTING;
+    
+    // 确保 STA netif 存在
+    if (s_sta_netif == NULL) {
+        s_sta_netif = esp_netif_create_default_wifi_sta();
+    }
+    
+    // 检查当前模式
+    wifi_mode_t mode;
+    esp_wifi_get_mode(&mode);
+    ESP_LOGI(TAG, "Current WiFi mode: %d", mode);
+    
+    // 配置 STA
+    wifi_config_t wifi_config = {0};
+    strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
+    strncpy((char*)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    
+    // 清空事件位
+    xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    
+    // 开始连接
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+        s_state = ZW_WIFI_FAILED;
+        return err;
+    }
+    
+    ESP_LOGI(TAG, "Waiting for connection...");
+    
+    // 等待连接结果
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                           pdFALSE, pdFALSE,
+                                           pdMS_TO_TICKS(15000));
+    
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "STA connected to AP");
+        return ESP_OK;
+    } else if (bits & WIFI_FAIL_BIT) {
+        ESP_LOGE(TAG, "STA connect failed");
+        return ESP_FAIL;
+    } else {
+        ESP_LOGE(TAG, "STA connect timeout");
+        return ESP_ERR_TIMEOUT;
+    }
+}
+
 esp_err_t zw_wifi_disconnect(void) {
     esp_err_t err = esp_wifi_stop();
     s_state = ZW_WIFI_DISCONNECTED;

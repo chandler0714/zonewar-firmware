@@ -15,6 +15,8 @@ typedef enum {
 
 esp_err_t zw_wifi_init(void);
 esp_err_t zw_wifi_connect(const char *ssid, const char *password);
+// 在 APSTA 模式下连接 WiFi（不切换模式，保持 AP 开启）
+esp_err_t zw_wifi_connect_sta_only(const char *ssid, const char *password);
 esp_err_t zw_wifi_disconnect(void);
 zw_wifi_state_t zw_wifi_get_state(void);
 bool zw_wifi_is_connected(void);

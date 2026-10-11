@@ -82,15 +82,59 @@ static const char *PROV_HTML =
 "var body='ssid='+encodeURIComponent(s)+'&password='+encodeURIComponent(p);"
 "try{var r=await fetch('/connect',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body});var d=await r.json();"
 "var el=document.getElementById('res');el.style.display='block';"
-"if(d.success){el.innerHTML='<div class=\"result ok\">✅ 连接成功！<br><small>设备正在连接，请稍候...</small></div>'}"
-"else{el.innerHTML='<div class=\"result err\">❌ 连接失败<br><small>'+esc(d.message||'请检查密码')+'</small></div>'}}"
+"if(d.success){"
+"el.innerHTML='<div class=\"result ok\">⏳ 正在连接...<br><small>请稍候，约需 10 秒</small></div>';"
+"pollStatus();"
+"}else{"
+"el.innerHTML='<div class=\"result err\">❌ 连接失败<br><small>'+esc(d.message||'请检查密码')+'</small></div>'}"
+"}"
 "catch(e){alert('请求失败')}"
+"}"
+"async function pollStatus(){"
+"for(var i=0;i<30;i++){"
+"try{"
+"var r=await fetch('/status');var d=await r.json();"
+"var el=document.getElementById('res');"
+"if(d.state==='success'){"
+"el.innerHTML='<div class=\"result ok\">✅ 连接成功！<br><small>可以关闭此页面</small></div>';"
+"return;"
+"}else if(d.state==='failed'||d.state==='waiting'){"
+"el.innerHTML='<div class=\"result err\">❌ 连接失败<br><small>请检查密码后重试</small></div>';"
+"return;"
+"}"
+"}catch(e){/* AP 可能已断开，说明连接成功 */"
+"var el=document.getElementById('res');"
+"el.innerHTML='<div class=\"result ok\">✅ 连接成功！<br><small>设备已连网，可以关闭此页面</small></div>';"
+"return;"
+"}"
+"await new Promise(r=>setTimeout(r,1000));"
+"}"
 "}"
 "</script></body></html>";
 
 static esp_err_t root_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_send(req, PROV_HTML, strlen(PROV_HTML));
+    return ESP_OK;
+}
+
+static esp_err_t status_handler(httpd_req_t *req) {
+    const char *state_str = "idle";
+    switch (s_state) {
+        case ZW_PROV_IDLE: state_str = "idle"; break;
+        case ZW_PROV_STARTING: state_str = "starting"; break;
+        case ZW_PROV_WAITING: state_str = "waiting"; break;
+        case ZW_PROV_CONNECTING: state_str = "connecting"; break;
+        case ZW_PROV_SUCCESS: state_str = "success"; break;
+        case ZW_PROV_FAILED: state_str = "failed"; break;
+        default: state_str = "unknown"; break;
+    }
+    
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf), "{\"state\":\"%s\"}", state_str);
+    
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, len);
     return ESP_OK;
 }
 
@@ -174,6 +218,29 @@ static int url_decode(const char *src, char *dst, int dst_size) {
     return j;
 }
 
+static void connect_task(void *arg) {
+    (void)arg;
+    
+    char ssid[32], password[64];
+    strncpy(ssid, s_prov_ssid, sizeof(ssid) - 1);
+    strncpy(password, s_prov_password, sizeof(password) - 1);
+    
+    ESP_LOGI(TAG, "Connect task: connecting to %s", ssid);
+    
+    // 尝试连接（不切换 WiFi 模式，保持 AP 开启）
+    esp_err_t err = zw_wifi_connect_sta_only(ssid, password);
+    
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Connect task: success");
+        s_state = ZW_PROV_SUCCESS;
+    } else {
+        ESP_LOGE(TAG, "Connect task: failed");
+        s_state = ZW_PROV_WAITING;
+    }
+    
+    vTaskDelete(NULL);
+}
+
 static esp_err_t connect_handler(httpd_req_t *req) {
     char *buf = malloc(req->content_len + 1);
     if (!buf) {
@@ -234,27 +301,20 @@ static esp_err_t connect_handler(httpd_req_t *req) {
     
     ESP_LOGI(TAG, "Connect request: ssid=%s, pwd_len=%d", ssid, (int)strlen(password));
     
-    s_state = ZW_PROV_CONNECTING;
+    // 保存凭证
     strncpy(s_prov_ssid, ssid, sizeof(s_prov_ssid) - 1);
     strncpy(s_prov_password, password, sizeof(s_prov_password) - 1);
-    
-    // 保存到 NVS
     zw_nvs_save_wifi(ssid, password);
     
-    // 尝试连接
-    esp_err_t err = zw_wifi_connect(ssid, password);
+    s_state = ZW_PROV_CONNECTING;
     
-    if (err == ESP_OK) {
-        s_state = ZW_PROV_SUCCESS;
-        const char *resp = "{\"success\":true,\"message\":\"连接成功\"}";
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, strlen(resp));
-    } else {
-        s_state = ZW_PROV_WAITING;
-        const char *resp = "{\"success\":false,\"message\":\"连接失败，请检查密码\"}";
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, strlen(resp));
-    }
+    // 立即返回响应，后台任务去连接
+    const char *resp = "{\"success\":true,\"message\":\"正在连接...\"}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+    
+    // 启动后台任务连接 WiFi（6KB 栈）
+    xTaskCreate(connect_task, "prov_connect", 6144, NULL, 5, NULL);
     
     return ESP_OK;
 }
@@ -275,6 +335,12 @@ static const httpd_uri_t connect_uri = {
     .uri = "/connect",
     .method = HTTP_POST,
     .handler = connect_handler,
+};
+
+static const httpd_uri_t status_uri = {
+    .uri = "/status",
+    .method = HTTP_GET,
+    .handler = status_handler,
 };
 
 esp_err_t zw_provision_start(const char *device_id) {
@@ -333,6 +399,7 @@ esp_err_t zw_provision_start(const char *device_id) {
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &scan_uri);
     httpd_register_uri_handler(s_server, &connect_uri);
+    httpd_register_uri_handler(s_server, &status_uri);
     
     ESP_LOGI(TAG, "HTTP server ready (stack=8192)");
     
