@@ -91,15 +91,15 @@ static const char *PROV_HTML =
 "catch(e){alert('请求失败')}"
 "}"
 "async function pollStatus(){"
-"for(var i=0;i<30;i++){"
+"for(var i=0;i<25;i++){"
 "try{"
 "var r=await fetch('/status');var d=await r.json();"
 "var el=document.getElementById('res');"
 "if(d.state==='success'){"
 "el.innerHTML='<div class=\"result ok\">✅ 连接成功！<br><small>可以关闭此页面</small></div>';"
 "return;"
-"}else if(d.state==='failed'||d.state==='waiting'){"
-"el.innerHTML='<div class=\"result err\">❌ 连接失败<br><small>请检查密码后重试</small></div>';"
+"}else if(d.state==='failed'){"
+"el.innerHTML='<div class=\"result err\">❌ 连接失败<br><small>密码错误或信号太差，请检查后重试</small></div>';"
 "return;"
 "}"
 "}catch(e){/* AP 可能已断开，说明连接成功 */"
@@ -109,6 +109,9 @@ static const char *PROV_HTML =
 "}"
 "await new Promise(r=>setTimeout(r,1000));"
 "}"
+"// 超时"
+"var el=document.getElementById('res');"
+"el.innerHTML='<div class=\"result err\">⏱️ 连接超时<br><small>请检查 WiFi 密码是否正确</small></div>';"
 "}"
 "</script></body></html>";
 
@@ -130,8 +133,10 @@ static esp_err_t status_handler(httpd_req_t *req) {
         default: state_str = "unknown"; break;
     }
     
-    char buf[128];
-    int len = snprintf(buf, sizeof(buf), "{\"state\":\"%s\"}", state_str);
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf), 
+        "{\"state\":\"%s\",\"ssid\":\"%s\"}", 
+        state_str, s_prov_ssid);
     
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, len);
@@ -225,19 +230,20 @@ static void connect_task(void *arg) {
     strncpy(ssid, s_prov_ssid, sizeof(ssid) - 1);
     strncpy(password, s_prov_password, sizeof(password) - 1);
     
-    ESP_LOGI(TAG, "Connect task: connecting to %s", ssid);
+    ESP_LOGI(TAG, "Connect task start: ssid=%s, pwd_len=%d", ssid, (int)strlen(password));
     
     // 尝试连接（不切换 WiFi 模式，保持 AP 开启）
     esp_err_t err = zw_wifi_connect_sta_only(ssid, password);
     
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Connect task: success");
+        ESP_LOGI(TAG, "Connect task: SUCCESS");
         s_state = ZW_PROV_SUCCESS;
     } else {
-        ESP_LOGE(TAG, "Connect task: failed");
-        s_state = ZW_PROV_WAITING;
+        ESP_LOGE(TAG, "Connect task: FAILED, err=%s", esp_err_to_name(err));
+        s_state = ZW_PROV_FAILED;
     }
     
+    ESP_LOGI(TAG, "Connect task done, state=%d", s_state);
     vTaskDelete(NULL);
 }
 
