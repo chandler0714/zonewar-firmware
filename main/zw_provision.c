@@ -55,18 +55,25 @@ static const char *PROV_HTML =
 "function esc(t){var d=document.createElement('div');d.textContent=t;return d.innerHTML}"
 "function bars(r){var l=r>=-50?4:r>=-60?3:r>=-70?2:1;return '█'.repeat(l)+'░'.repeat(4-l)}"
 "function render(aps){"
-"var el=document.getElementById('wlist');if(!aps.length){el.innerHTML='<div class=\"status\">未找到</div>';return}"
+"var el=document.getElementById('wlist');if(!aps.length){el.innerHTML='<div class=\"status\">未找到 WiFi</div>';return}"
 "aps.sort(function(a,b){return b.r-a.r});var h='';"
 "for(var i=0;i<aps.length;i++){var a=aps[i];var l=a.e?'🔒':'🔓';"
 "h+='<div class=\"wifiitem\" onclick=\"sel(\\''+a.s.replace(/'/g,\"\\\\'\")+'\\')\">'"
-"+'<div class=\"ssid\">'+esc(a.s)+'</div><div class=\"desc\">信号 '+bars(a.r)+' '+a.r+'dBm</div></div>'}"
+"+'<div class=\"ssid\">'+esc(a.s)+'</div><div class=\"desc\">'+l+' 信号 '+bars(a.r)+' '+a.r+'dBm</div></div>'}"
 "el.innerHTML=h}"
 "function sel(s){document.getElementById('ssid').value=s;document.getElementById('pwd').focus()}"
 "async function scanWifi(){"
 "var btn=event.target;btn.disabled=true;"
-"document.getElementById('wlist').innerHTML='<div class=\"status\">扫描中...</div>';"
-"try{var r=await fetch('/scan');var d=await r.json();render(d.aps||[])}"
-"catch(e){document.getElementById('wlist').innerHTML='<div class=\"status\">扫描失败</div>'}"
+"document.getElementById('wlist').innerHTML='<div class=\"status\">扫描中...（约3秒）</div>';"
+"try{"
+"var r=await fetch('/scan');if(!r.ok)throw 'HTTP '+r.status;"
+"var d=await r.json();"
+"if(d.error){document.getElementById('wlist').innerHTML='<div class=\"status\">扫描失败：'+esc(d.error)+'</div>'}"
+"else{render(d.aps||[])}"
+"}catch(e){"
+"console.log('scan error:',e);"
+"document.getElementById('wlist').innerHTML='<div class=\"status\">扫描失败，请重试</div>'"
+"}"
 "btn.disabled=false}"
 "async function connect(){"
 "var s=document.getElementById('ssid').value.trim();"
@@ -75,7 +82,7 @@ static const char *PROV_HTML =
 "var fd=new FormData();fd.append('ssid',s);fd.append('password',p);"
 "try{var r=await fetch('/connect',{method:'POST',body:fd});var d=await r.json();"
 "var el=document.getElementById('res');el.style.display='block';"
-"if(d.success){el.innerHTML='<div class=\"result ok\">✅ 连接成功！<br><small>可以关闭此页面</small></div>'}"
+"if(d.success){el.innerHTML='<div class=\"result ok\">✅ 连接成功！<br><small>设备正在连接，请稍候...</small></div>'}"
 "else{el.innerHTML='<div class=\"result err\">❌ 连接失败<br><small>'+esc(d.message||'请检查密码')+'</small></div>'}}"
 "catch(e){alert('请求失败')}"
 "}"
@@ -88,44 +95,94 @@ static esp_err_t root_handler(httpd_req_t *req) {
 }
 
 static esp_err_t scan_handler(httpd_req_t *req) {
-    zw_wifi_ap_t aps[ZW_WIFI_SCAN_MAX_AP];
+    ESP_LOGI(TAG, "Scan request received");
+    
+    // 用堆分配而不是栈分配，避免 HTTP 任务栈溢出
+    zw_wifi_ap_t *aps = malloc(ZW_WIFI_SCAN_MAX_AP * sizeof(zw_wifi_ap_t));
+    if (!aps) {
+        ESP_LOGE(TAG, "Failed to alloc scan buffer");
+        const char *resp = "{\"error\":\"内存不足\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, strlen(resp));
+        return ESP_OK;
+    }
+    
     int count = zw_wifi_scan(aps, ZW_WIFI_SCAN_MAX_AP);
+    ESP_LOGI(TAG, "Scan result: %d APs", count);
     
-    char buf[1500];
-    int offset = snprintf(buf, sizeof(buf), "{\"aps\":[");
+    // 计算需要的 buffer 大小并动态分配
+    int buf_size = 200 + count * 100;  // 每个 AP 约 100 字节
+    char *buf = malloc(buf_size);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to alloc response buffer");
+        free(aps);
+        const char *resp = "{\"error\":\"内存不足\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, strlen(resp));
+        return ESP_OK;
+    }
     
-    for (int i = 0; i < count && i < 15; i++) {
+    int offset = snprintf(buf, buf_size, "{\"aps\":[");
+    
+    for (int i = 0; i < count && i < ZW_WIFI_SCAN_MAX_AP; i++) {
+        if (offset + 128 >= buf_size) break;
         if (i > 0) buf[offset++] = ',';
-        char safe_ssid[64];
+        
+        // 安全转义 SSID
+        char safe_ssid[128];
         int si = 0;
-        for (int j = 0; aps[i].ssid[j] && si < 60; j++) {
+        for (int j = 0; aps[i].ssid[j] && si < 120; j++) {
             char c = aps[i].ssid[j];
             if (c == '"' || c == '\\') { safe_ssid[si++] = '\\'; safe_ssid[si++] = c; }
             else if (c >= 0x20 && c < 0x7f) { safe_ssid[si++] = c; }
         }
         safe_ssid[si] = '\0';
-        offset += snprintf(buf + offset, sizeof(buf) - offset,
+        
+        offset += snprintf(buf + offset, buf_size - offset,
             "{\"s\":\"%s\",\"r\":%d,\"e\":%d}",
             safe_ssid, aps[i].rssi, aps[i].encrypted ? 1 : 0);
     }
     
-    offset += snprintf(buf + offset, sizeof(buf) - offset, "]}");
-    buf[sizeof(buf) - 1] = '\0';
+    offset += snprintf(buf + offset, buf_size - offset, "]}");
     
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, buf, strlen(buf));
+    httpd_resp_send(req, buf, offset);
+    
+    free(aps);
+    free(buf);
+    
+    ESP_LOGI(TAG, "Scan response sent, %d bytes", offset);
     return ESP_OK;
 }
 
+// URL 解码
+static int url_decode(const char *src, char *dst, int dst_size) {
+    int i = 0, j = 0;
+    while (src[i] && j < dst_size - 1) {
+        if (src[i] == '+') {
+            dst[j++] = ' ';
+            i++;
+        } else if (src[i] == '%' && src[i+1] && src[i+2]) {
+            char hex[3] = {src[i+1], src[i+2], 0};
+            dst[j++] = (char)strtol(hex, NULL, 16);
+            i += 3;
+        } else {
+            dst[j++] = src[i++];
+        }
+    }
+    dst[j] = '\0';
+    return j;
+}
+
 static esp_err_t connect_handler(httpd_req_t *req) {
-    char buf[256];
-    int total_len = req->content_len;
-    int cur_len = 0;
-    
-    if (total_len >= sizeof(buf)) {
+    char *buf = malloc(req->content_len + 1);
+    if (!buf) {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
+    
+    int total_len = req->content_len;
+    int cur_len = 0;
     
     while (cur_len < total_len) {
         int recv = httpd_req_recv(req, buf + cur_len, total_len - cur_len);
@@ -134,19 +191,23 @@ static esp_err_t connect_handler(httpd_req_t *req) {
     }
     buf[cur_len] = '\0';
     
-    // 简单解析 form data
-    char ssid[32] = {0};
-    char password[64] = {0};
+    ESP_LOGI(TAG, "Connect request body: %s", buf);
+    
+    // 解析 form data (URL-encoded)
+    char ssid[64] = {0};
+    char password[128] = {0};
     
     char *p = strstr(buf, "ssid=");
     if (p) {
         p += 5;
         char *end = strchr(p, '&');
         if (!end) end = p + strlen(p);
+        char tmp[128];
         int len = end - p;
-        if (len > 31) len = 31;
-        memcpy(ssid, p, len);
-        ssid[len] = '\0';
+        if (len >= sizeof(tmp)) len = sizeof(tmp) - 1;
+        memcpy(tmp, p, len);
+        tmp[len] = '\0';
+        url_decode(tmp, ssid, sizeof(ssid));
     }
     
     p = strstr(buf, "password=");
@@ -154,20 +215,24 @@ static esp_err_t connect_handler(httpd_req_t *req) {
         p += 9;
         char *end = strchr(p, '&');
         if (!end) end = p + strlen(p);
+        char tmp[128];
         int len = end - p;
-        if (len > 63) len = 63;
-        memcpy(password, p, len);
-        password[len] = '\0';
+        if (len >= sizeof(tmp)) len = sizeof(tmp) - 1;
+        memcpy(tmp, p, len);
+        tmp[len] = '\0';
+        url_decode(tmp, password, sizeof(password));
     }
     
+    free(buf);
+    
     if (!ssid[0]) {
-        const char *resp = "{\"success\":false,\"message\":\"SSID required\"}";
+        const char *resp = "{\"success\":false,\"message\":\"请输入 Wi-Fi 名称\"}";
         httpd_resp_set_type(req, "application/json");
         httpd_resp_send(req, resp, strlen(resp));
         return ESP_OK;
     }
     
-    ESP_LOGI(TAG, "Connect request: ssid=%s", ssid);
+    ESP_LOGI(TAG, "Connect request: ssid=%s, pwd_len=%d", ssid, (int)strlen(password));
     
     s_state = ZW_PROV_CONNECTING;
     strncpy(s_prov_ssid, ssid, sizeof(s_prov_ssid) - 1);
@@ -181,12 +246,12 @@ static esp_err_t connect_handler(httpd_req_t *req) {
     
     if (err == ESP_OK) {
         s_state = ZW_PROV_SUCCESS;
-        const char *resp = "{\"success\":true,\"message\":\"Connected\"}";
+        const char *resp = "{\"success\":true,\"message\":\"连接成功\"}";
         httpd_resp_set_type(req, "application/json");
         httpd_resp_send(req, resp, strlen(resp));
     } else {
         s_state = ZW_PROV_WAITING;
-        const char *resp = "{\"success\":false,\"message\":\"Failed. Check password.\"}";
+        const char *resp = "{\"success\":false,\"message\":\"连接失败，请检查密码\"}";
         httpd_resp_set_type(req, "application/json");
         httpd_resp_send(req, resp, strlen(resp));
     }
@@ -234,8 +299,8 @@ esp_err_t zw_provision_start(const char *device_id) {
         return ESP_FAIL;
     }
     
-    // 确保 STA netif 存在（用于扫描）
-    esp_netif_create_default_wifi_sta();  // 可能已经存在，忽略错误
+    // 确保 STA netif 存在（用于扫描和后续连接）
+    esp_netif_create_default_wifi_sta();
     
     // 配置 AP
     wifi_config_t ap_config;
@@ -250,10 +315,11 @@ esp_err_t zw_provision_start(const char *device_id) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     
-    ESP_LOGI(TAG, "AP started");
+    ESP_LOGI(TAG, "AP started (APSTA mode)");
     
-    // 启动 HTTP 服务器
+    // 启动 HTTP 服务器 - 增大栈空间（扫描需要更多栈）
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size = 8192;  // 默认 4096 不够，扫描函数需要更多
     
     if (httpd_start(&s_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -268,7 +334,7 @@ esp_err_t zw_provision_start(const char *device_id) {
     httpd_register_uri_handler(s_server, &scan_uri);
     httpd_register_uri_handler(s_server, &connect_uri);
     
-    ESP_LOGI(TAG, "HTTP server ready");
+    ESP_LOGI(TAG, "HTTP server ready (stack=8192)");
     
     s_state = ZW_PROV_WAITING;
     return ESP_OK;

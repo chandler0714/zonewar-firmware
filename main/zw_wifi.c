@@ -132,18 +132,27 @@ int zw_wifi_scan(zw_wifi_ap_t *aps, int max_aps) {
     
     ESP_LOGI(TAG, "Starting WiFi scan...");
     
-    // 确保 WiFi 已初始化
+    // 检查 WiFi 状态
     wifi_mode_t mode;
     esp_err_t err = esp_wifi_get_mode(&mode);
-    if (err != ESP_OK || mode == WIFI_MODE_NULL) {
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get WiFi mode: %s", esp_err_to_name(err));
+        return 0;
+    }
+    
+    ESP_LOGI(TAG, "WiFi mode: %d", mode);
+    
+    if (mode == WIFI_MODE_NULL) {
         // WiFi 未启动，先启动 STA 模式
+        ESP_LOGI(TAG, "WiFi not started, starting STA mode");
         if (s_sta_netif == NULL) {
             s_sta_netif = esp_netif_create_default_wifi_sta();
         }
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
+    // AP 或 APSTA 模式下直接扫描（STA 接口已经在运行）
     
     // 配置扫描参数
     wifi_scan_config_t scan_cfg = {
@@ -153,20 +162,30 @@ int zw_wifi_scan(zw_wifi_ap_t *aps, int max_aps) {
         .show_hidden = false,
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
         .scan_time.active.min = 0,
-        .scan_time.active.max = 120,
+        .scan_time.active.max = 120,  // 每个信道 120ms
     };
     
     // 开始扫描（阻塞）
+    ESP_LOGI(TAG, "Calling esp_wifi_scan_start...");
     err = esp_wifi_scan_start(&scan_cfg, true);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(err));
         return 0;
     }
     
+    ESP_LOGI(TAG, "Scan complete, getting results...");
+    
     // 获取扫描结果数量
     uint16_t ap_num = 0;
     err = esp_wifi_scan_get_ap_num(&ap_num);
-    if (err != ESP_OK || ap_num == 0) {
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get AP num: %s", esp_err_to_name(err));
+        return 0;
+    }
+    
+    ESP_LOGI(TAG, "Found %d APs total", ap_num);
+    
+    if (ap_num == 0) {
         ESP_LOGI(TAG, "No AP found");
         return 0;
     }
@@ -202,6 +221,6 @@ int zw_wifi_scan(zw_wifi_ap_t *aps, int max_aps) {
     }
     
     free(records);
-    ESP_LOGI(TAG, "Scan done: %d APs found", count);
+    ESP_LOGI(TAG, "Scan done: %d APs (valid)", count);
     return count;
 }
