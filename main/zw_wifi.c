@@ -131,7 +131,12 @@ esp_err_t zw_wifi_connect_sta_only(const char *ssid, const char *password) {
     
     // 检查当前模式
     wifi_mode_t mode;
-    esp_wifi_get_mode(&mode);
+    esp_err_t err = esp_wifi_get_mode(&mode);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_get_mode failed: %s", esp_err_to_name(err));
+        s_state = ZW_WIFI_FAILED;
+        return err;
+    }
     ESP_LOGI(TAG, "Current WiFi mode: %d", mode);
     
     // 配置 STA
@@ -140,13 +145,18 @@ esp_err_t zw_wifi_connect_sta_only(const char *ssid, const char *password) {
     strncpy((char*)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_config(STA) failed: %s", esp_err_to_name(err));
+        s_state = ZW_WIFI_FAILED;
+        return err;
+    }
     
     // 清空事件位
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
     
     // 开始连接
-    esp_err_t err = esp_wifi_connect();
+    err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
         s_state = ZW_WIFI_FAILED;

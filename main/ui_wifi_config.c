@@ -98,6 +98,29 @@ static void on_wifi_received(zw_wifi_cred_t cred) {
 }
 
 // 轮询 SoftAP 配网状态
+static void register_after_prov_task(void *arg) {
+    (void)arg;
+    
+    ESP_LOGI(TAG, "Registering device after provisioning...");
+    
+    // 等待 WiFi 连接稳定
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    
+    if (zw_wifi_is_connected()) {
+        bool has_team = false;
+        int team = 0;
+        if (zw_api_register(&has_team, &team) == ESP_OK) {
+            ESP_LOGI(TAG, "Registered: has_team=%d, team=%d", has_team, team);
+            if (has_team && g_zw.config.team == 0) {
+                g_zw.config.team = team;
+                zw_nvs_save_team(team);
+            }
+        }
+    }
+    
+    vTaskDelete(NULL);
+}
+
 static void prov_poll_task(void *arg) {
     (void)arg;
     
@@ -105,25 +128,28 @@ static void prov_poll_task(void *arg) {
         zw_prov_state_t state = zw_provision_get_state();
         
         if (state == ZW_PROV_SUCCESS) {
-            ESP_LOGI(TAG, "SoftAP provisioning success");
+            ESP_LOGI(TAG, "SoftAP provisioning success, stopping AP...");
             
-            zw_wifi_cred_t cred;
-            memset(&cred, 0, sizeof(cred));
-            strncpy(cred.ssid, zw_provision_get_ssid(), sizeof(cred.ssid) - 1);
-            // 密码由 provision 模块保存在 NVS，这里从 NVS 读
-            // 注意：provision 模块已经调用了 zw_nvs_save_wifi
-            // 所以直接从 NVS 加载
-            zw_config_t cfg;
-            memset(&cfg, 0, sizeof(cfg));
-            zw_nvs_load(&cfg);
-            strncpy(cred.password, cfg.wifi_password, sizeof(cred.password) - 1);
-            cred.valid = true;
+            // 停止 SoftAP（provision 模块已连接 WiFi，只需关掉 AP）
+            zw_provision_stop();
+            s_softap_started = false;
             
-            zw_wifi_cred_t *cred_copy = malloc(sizeof(zw_wifi_cred_t));
-            if (cred_copy) {
-                memcpy(cred_copy, &cred, sizeof(zw_wifi_cred_t));
-                xTaskCreate(wifi_connect_task, "wifi_conn", 6144, cred_copy, 5, NULL);
+            // 从 NVS 加载配置（provision 模块已保存）
+            zw_nvs_load(&g_zw.config);
+            
+            // 后台注册设备（8KB 栈，HTTP 需要较大栈）
+            xTaskCreate(register_after_prov_task, "prov_reg", 8192, NULL, 5, NULL);
+            
+            // 更新 UI 并跳转
+            if (bsp_lvgl_lock(100)) {
+                if (g_zw.config.team == ZW_TEAM_NONE) {
+                    zw_ui_switch_page(ZW_PAGE_TEAM_SELECT);
+                } else {
+                    zw_ui_switch_page(ZW_PAGE_DASHBOARD);
+                }
+                bsp_lvgl_unlock();
             }
+            
             break;
         }
         
@@ -209,8 +235,8 @@ void ui_wifi_config_enter(void) {
         lv_label_set_text(s_status, "Hotspot ready!");
         lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
         
-        // 启动轮询任务
-        xTaskCreate(prov_poll_task, "prov_poll", 2048, NULL, 4, NULL);
+        // 启动轮询任务（4KB 栈）
+        xTaskCreate(prov_poll_task, "prov_poll", 4096, NULL, 4, NULL);
     } else {
         // SoftAP 失败也没关系，还有 BLE
         lv_label_set_text(s_status, "BLE mode only");
@@ -282,7 +308,7 @@ void ui_wifi_config_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
                     s_softap_started = true;
                     lv_label_set_text(s_status, "Hotspot ready!");
                     lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
-                    xTaskCreate(prov_poll_task, "prov_poll", 2048, NULL, 4, NULL);
+                    xTaskCreate(prov_poll_task, "prov_poll", 4096, NULL, 4, NULL);
                 }
             }
         }

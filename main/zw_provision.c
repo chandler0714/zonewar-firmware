@@ -313,8 +313,8 @@ static esp_err_t connect_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, strlen(resp));
     
-    // 启动后台任务连接 WiFi（6KB 栈）
-    xTaskCreate(connect_task, "prov_connect", 6144, NULL, 5, NULL);
+    // 启动后台任务连接 WiFi（8KB 栈）
+    xTaskCreate(connect_task, "prov_connect", 8192, NULL, 5, NULL);
     
     return ESP_OK;
 }
@@ -408,24 +408,39 @@ esp_err_t zw_provision_start(const char *device_id) {
 }
 
 esp_err_t zw_provision_stop(void) {
-    ESP_LOGI(TAG, "Stopping provisioning");
+    ESP_LOGI(TAG, "Stopping provisioning, state=%d", s_state);
     
+    // 停 HTTP server
     if (s_server) {
         httpd_stop(s_server);
         s_server = NULL;
     }
     
-    esp_wifi_stop();
-    
-    if (s_ap_netif) {
-        esp_netif_destroy(s_ap_netif);
-        s_ap_netif = NULL;
-    }
-    
-    // 切回 STA 模式
     if (s_state == ZW_PROV_SUCCESS) {
-        esp_wifi_set_mode(WIFI_MODE_STA);
-        esp_wifi_start();
+        // 连接成功：只关掉 AP，保持 STA 连接
+        ESP_LOGI(TAG, "Success mode: stopping AP only, keeping STA connected");
+        
+        wifi_mode_t mode;
+        if (esp_wifi_get_mode(&mode) == ESP_OK && mode == WIFI_MODE_APSTA) {
+            // 从 APSTA 切到 STA（只关 AP，STA 保持连接）
+            esp_wifi_set_mode(WIFI_MODE_STA);
+        }
+        
+        // 销毁 AP netif
+        if (s_ap_netif) {
+            esp_netif_destroy(s_ap_netif);
+            s_ap_netif = NULL;
+        }
+    } else {
+        // 未连接成功：完全停止 WiFi
+        ESP_LOGI(TAG, "Non-success: stopping full WiFi");
+        
+        esp_wifi_stop();
+        
+        if (s_ap_netif) {
+            esp_netif_destroy(s_ap_netif);
+            s_ap_netif = NULL;
+        }
     }
     
     s_state = ZW_PROV_IDLE;
