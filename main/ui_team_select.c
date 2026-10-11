@@ -39,27 +39,36 @@ static void update_selection(void) {
 static void join_team_task(void *arg) {
     int team = (int)arg;
     
+    ESP_LOGI(TAG, "Joining team %d", team);
+    
     // 调用服务器 API
     esp_err_t err = zw_api_join_team(team + 1);
+    
+    ESP_LOGI(TAG, "Join result: %s", err == ESP_OK ? "success" : "failed");
     
     if (bsp_lvgl_lock(200)) {
         if (err == ESP_OK) {
             // 保存到 NVS
             zw_nvs_save_team(team + 1);
             g_zw.config.team = team + 1;
-            lv_label_set_text(s_status, "Joined successfully!");
+            lv_label_set_text(s_status, "Joined!");
+            lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
             
             // 更新 BLE 设备信息
             zw_ble_set_device_info(g_zw.config.device_id, team + 1);
             
-            // 延迟后跳转到管理界面
-            vTaskDelay(pdMS_TO_TICKS(1500));
+            bsp_lvgl_unlock();
+            
+            // 延迟后跳转（在任务里延迟，不要在锁里延迟）
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            
             zw_ui_switch_page(ZW_PAGE_DASHBOARD);
         } else {
-            lv_label_set_text(s_status, "Join failed, check network");
+            lv_label_set_text(s_status, "Join failed, retry");
+            lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
             s_confirming = false;
+            bsp_lvgl_unlock();
         }
-        bsp_lvgl_unlock();
     }
     
     vTaskDelete(NULL);
@@ -161,7 +170,7 @@ void ui_team_select_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
         s_confirming = true;
         lv_label_set_text(s_status, "Joining...");
         
-        // 后台执行加入
-        xTaskCreate(join_team_task, "join_team", 4096, (void*)s_selected, 5, NULL);
+        // 后台执行加入 - 8KB 栈（HTTP 请求需要较多栈空间）
+        xTaskCreate(join_team_task, "join_team", 8192, (void*)s_selected, 5, NULL);
     }
 }
