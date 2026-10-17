@@ -25,6 +25,7 @@ typedef struct {
 esp_err_t zw_nvs_init(void);
 esp_err_t zw_nvs_load(zw_config_t *config);
 esp_err_t zw_nvs_save_team(int team);
+esp_err_t zw_nvs_clear_team(void);
 esp_err_t zw_nvs_save_wifi(const char *ssid, const char *password);
 esp_err_t zw_nvs_save_server_url(const char *url);
 const char* zw_nvs_get_device_id(void);

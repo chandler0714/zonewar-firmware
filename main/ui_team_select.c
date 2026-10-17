@@ -10,6 +10,7 @@
 #include "bsp_display.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "zw_theme.h"
 
 static const char *TAG = "ui_team";
 
@@ -21,19 +22,16 @@ static int s_selected = 0;  // 0=red, 1=blue
 static bool s_confirming = false;
 
 static void update_selection(void) {
-    if (s_selected == 0) {
-        // 红队选中
-        lv_obj_set_style_border_width(s_red_panel, 4, 0);
-        lv_obj_set_style_border_color(s_red_panel, lv_color_hex(0xffffff), 0);
-        lv_obj_set_style_border_width(s_blue_panel, 2, 0);
-        lv_obj_set_style_border_color(s_blue_panel, lv_color_hex(0x666666), 0);
-    } else {
-        // 蓝队选中
-        lv_obj_set_style_border_width(s_blue_panel, 4, 0);
-        lv_obj_set_style_border_color(s_blue_panel, lv_color_hex(0xffffff), 0);
-        lv_obj_set_style_border_width(s_red_panel, 2, 0);
-        lv_obj_set_style_border_color(s_red_panel, lv_color_hex(0x666666), 0);
-    }
+    lv_obj_set_style_border_width(s_red_panel, s_selected == 0 ? 2 : 1, 0);
+    lv_obj_set_style_border_color(s_red_panel,
+        lv_color_hex(s_selected == 0 ? ZW_C_RED : ZW_C_LINE), 0);
+    lv_obj_set_style_bg_color(s_red_panel,
+        lv_color_hex(s_selected == 0 ? 0x482535 : ZW_C_SURFACE), 0);
+    lv_obj_set_style_border_width(s_blue_panel, s_selected == 1 ? 2 : 1, 0);
+    lv_obj_set_style_border_color(s_blue_panel,
+        lv_color_hex(s_selected == 1 ? ZW_C_BLUE : ZW_C_LINE), 0);
+    lv_obj_set_style_bg_color(s_blue_panel,
+        lv_color_hex(s_selected == 1 ? 0x213A62 : ZW_C_SURFACE), 0);
 }
 
 static void join_team_task(void *arg) {
@@ -52,7 +50,7 @@ static void join_team_task(void *arg) {
             zw_nvs_save_team(team + 1);
             g_zw.config.team = team + 1;
             lv_label_set_text(s_status, "Joined!");
-            lv_obj_set_style_text_color(s_status, lv_color_hex(0x4ade80), 0);
+            lv_obj_set_style_text_color(s_status, lv_color_hex(ZW_C_CYAN), 0);
             
             // 更新 BLE 设备信息
             zw_ble_set_device_info(g_zw.config.device_id, team + 1);
@@ -62,10 +60,10 @@ static void join_team_task(void *arg) {
             // 延迟后跳转（在任务里延迟，不要在锁里延迟）
             vTaskDelay(pdMS_TO_TICKS(1000));
             
-            zw_ui_switch_page(ZW_PAGE_DASHBOARD);
+            zw_ui_switch_page(ZW_PAGE_TEAM_MGMT);
         } else {
             lv_label_set_text(s_status, "Join failed, retry");
-            lv_obj_set_style_text_color(s_status, lv_color_hex(0xff6b6b), 0);
+            lv_obj_set_style_text_color(s_status, lv_color_hex(ZW_C_RED), 0);
             s_confirming = false;
             bsp_lvgl_unlock();
         }
@@ -77,71 +75,61 @@ static void join_team_task(void *arg) {
 void ui_team_select_enter(void) {
     ESP_LOGI(TAG, "Enter team select");
     
-    s_scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_scr, lv_color_hex(0x0a0a1a), 0);
-    
-    // 标题
-    lv_obj_t *title = lv_label_create(s_scr);
-    lv_label_set_text(title, "Select Your Team");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
+    s_scr = zw_theme_screen(ZW_C_CYAN);
+    zw_theme_header(s_scr, "ZONEWAR  /  01", "CHOOSE SIDE", ZW_C_CYAN);
+    zw_theme_footer(s_scr, "UP/DOWN  SELECT      OK  JOIN");
     
     // 副标题
     lv_obj_t *sub = lv_label_create(s_scr);
-    lv_label_set_text(sub, "Cannot be changed after selection");
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(sub, lv_color_hex(0x888888), 0);
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 60);
+    lv_label_set_text(sub, "Claim ground for your faction");
+    lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(sub, lv_color_hex(ZW_C_MUTED), 0);
+    lv_obj_set_pos(sub, 14, 66);
     
     // 红队面板
     s_red_panel = lv_obj_create(s_scr);
-    lv_obj_set_size(s_red_panel, 90, 120);
-    lv_obj_set_style_bg_color(s_red_panel, lv_color_hex(0x8b0000), 0);
-    lv_obj_set_style_border_width(s_red_panel, 4, 0);
-    lv_obj_set_style_border_color(s_red_panel, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_radius(s_red_panel, 12, 0);
-    lv_obj_align(s_red_panel, LV_ALIGN_CENTER, -55, 20);
+    lv_obj_set_size(s_red_panel, 100, 143);
+    zw_theme_panel(s_red_panel);
+    lv_obj_set_pos(s_red_panel, 14, 96);
+    lv_obj_set_scrollable(s_red_panel, false);
     
     lv_obj_t *red_icon = lv_label_create(s_red_panel);
     lv_label_set_text(red_icon, "R");
     lv_obj_set_style_text_font(red_icon, &lv_font_montserrat_28, 0);
-    lv_obj_center(red_icon);
-    lv_obj_align(red_icon, LV_ALIGN_TOP_MID, 0, 15);
+    lv_obj_set_style_text_color(red_icon, lv_color_hex(ZW_C_RED), 0);
+    lv_obj_align(red_icon, LV_ALIGN_TOP_MID, 0, 20);
     
     lv_obj_t *red_text = lv_label_create(s_red_panel);
     lv_label_set_text(red_text, "RED");
     lv_obj_set_style_text_font(red_text, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(red_text, lv_color_hex(0xffffff), 0);
-    lv_obj_align(red_text, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_text_color(red_text, lv_color_hex(ZW_C_TEXT), 0);
+    lv_obj_align(red_text, LV_ALIGN_BOTTOM_MID, 0, -19);
     
     // 蓝队面板
     s_blue_panel = lv_obj_create(s_scr);
-    lv_obj_set_size(s_blue_panel, 90, 120);
-    lv_obj_set_style_bg_color(s_blue_panel, lv_color_hex(0x003366), 0);
-    lv_obj_set_style_border_width(s_blue_panel, 2, 0);
-    lv_obj_set_style_border_color(s_blue_panel, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_radius(s_blue_panel, 12, 0);
-    lv_obj_align(s_blue_panel, LV_ALIGN_CENTER, 55, 20);
+    lv_obj_set_size(s_blue_panel, 100, 143);
+    zw_theme_panel(s_blue_panel);
+    lv_obj_set_pos(s_blue_panel, 126, 96);
+    lv_obj_set_scrollable(s_blue_panel, false);
     
     lv_obj_t *blue_icon = lv_label_create(s_blue_panel);
     lv_label_set_text(blue_icon, "B");
     lv_obj_set_style_text_font(blue_icon, &lv_font_montserrat_28, 0);
-    lv_obj_center(blue_icon);
-    lv_obj_align(blue_icon, LV_ALIGN_TOP_MID, 0, 15);
+    lv_obj_set_style_text_color(blue_icon, lv_color_hex(ZW_C_BLUE), 0);
+    lv_obj_align(blue_icon, LV_ALIGN_TOP_MID, 0, 20);
     
     lv_obj_t *blue_text = lv_label_create(s_blue_panel);
     lv_label_set_text(blue_text, "BLUE");
     lv_obj_set_style_text_font(blue_text, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(blue_text, lv_color_hex(0xffffff), 0);
-    lv_obj_align(blue_text, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_text_color(blue_text, lv_color_hex(ZW_C_TEXT), 0);
+    lv_obj_align(blue_text, LV_ALIGN_BOTTOM_MID, 0, -19);
     
     // 状态提示
     s_status = lv_label_create(s_scr);
-    lv_label_set_text(s_status, "Up/Down: Select   OK: Join");
-    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_status, lv_color_hex(0xaaaaaa), 0);
-    lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_label_set_text(s_status, "SELECT A FACTION");
+    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(s_status, lv_color_hex(ZW_C_MUTED), 0);
+    lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 252);
     
     s_selected = 0;
     s_confirming = false;

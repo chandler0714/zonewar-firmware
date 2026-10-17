@@ -32,59 +32,67 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
 // 启动任务
 static void startup_task(void *arg) {
     (void)arg;
-    
+
     ESP_LOGI(TAG, "ZoneWar starting up...");
-    
+
     // 等待 LVGL 就绪
     vTaskDelay(pdMS_TO_TICKS(500));
-    
+
     // 加载配置
     zw_nvs_load(&g_zw.config);
     ESP_LOGI(TAG, "Config loaded: team=%d, wifi_cfg=%d",
              g_zw.config.team, g_zw.config.wifi_configured);
-    
-    // 初始化 Wi-Fi
+
+    // 1. 优先初始化 Wi-Fi 驱动，并在 BLE 启动前抢扫一次 WiFi（此时射频独占，扫描可靠）
+    //     结果缓存起来，供手机通过 BLE 读取，彻底绕开 BLE/WiFi 共存时的扫描失败问题
     zw_wifi_init();
-    
-    // 初始化 BLE 并启动广播（随时可接收手机坐标）
+    zw_wifi_boot_scan();
+
     zw_ble_init();
     zw_ble_set_device_info(g_zw.config.device_id, g_zw.config.team);
     zw_ble_start_advertising();
-    
-    // 初始化 API
+
+    // 2. 初始化 API 与 UI（UI 内注册 BLE 凭证回调）
     zw_api_init(g_zw.config.server_url);
-    
-    // 初始化 UI
     zw_ui_init();
-    
-    // 如果已配置 Wi-Fi，尝试连接
+
+    // 3. 尝试连接已保存的 Wi-Fi
+    bool wifi_ok = false;
     if (g_zw.config.wifi_configured) {
         ESP_LOGI(TAG, "Auto-connecting Wi-Fi...");
-        zw_wifi_connect(g_zw.config.wifi_ssid, g_zw.config.wifi_password);
-        
-        // 注册设备（后台）
-        if (zw_wifi_is_connected()) {
-            bool has_team = false;
-            int team = 0;
-            if (zw_api_register(&has_team, &team) == ESP_OK) {
-                ESP_LOGI(TAG, "Registered: has_team=%d, team=%d", has_team, team);
-                if (has_team && g_zw.config.team == 0) {
-                    g_zw.config.team = team;
-                    zw_nvs_save_team(team);
-                }
+        wifi_ok = (zw_wifi_connect(g_zw.config.wifi_ssid, g_zw.config.wifi_password) == ESP_OK);
+    }
+
+    // 4. 分流首屏
+    if (!wifi_ok) {
+        if (g_zw.config.team != ZW_TEAM_NONE) {
+            // 已选阵营：蓝牙只在首次配网/选阵营前必需。WiFi 不可用时保持离线游戏状态，
+            // 直接进阵营管理页（页内提示离线，按 OK 可自动重连）；BLE 广播仍在运行，
+            // 用户可随时长按上键进设置自行重新配网，不强制把用户踢到配网页
+            ESP_LOGI(TAG, "Offline but team selected, enter team mgmt");
+            zw_ui_switch_page(ZW_PAGE_TEAM_MGMT);
+        } else {
+            // 未配置且未选阵营：首次使用必须蓝牙配网
+            ESP_LOGI(TAG, "No Wi-Fi, enter BLE config");
+            zw_ui_switch_page(ZW_PAGE_BLE_CONFIG);
+        }
+    } else {
+        // 联网后向服务器注册，查询是否已选阵营
+        bool has_team = false;
+        int team = 0;
+        if (zw_api_register(&has_team, &team) == ESP_OK) {
+            ESP_LOGI(TAG, "Registered: has_team=%d, team=%d", has_team, team);
+            if (has_team && g_zw.config.team == ZW_TEAM_NONE) {
+                g_zw.config.team = team;
+                zw_nvs_save_team(team);
+                zw_ble_set_device_info(g_zw.config.device_id, team);
             }
         }
+        // 已选阵营直接进游戏（阵营管理页），否则先选阵营
+        zw_ui_switch_page(g_zw.config.team != ZW_TEAM_NONE
+                              ? ZW_PAGE_TEAM_MGMT : ZW_PAGE_TEAM_SELECT);
     }
-    
-    // 决定进入哪个页面
-    if (!g_zw.config.wifi_configured) {
-        zw_ui_switch_page(ZW_PAGE_WIFI_CONFIG);
-    } else if (g_zw.config.team == ZW_TEAM_NONE) {
-        zw_ui_switch_page(ZW_PAGE_TEAM_SELECT);
-    } else {
-        zw_ui_switch_page(ZW_PAGE_DASHBOARD);
-    }
-    
+
     ESP_LOGI(TAG, "Startup complete");
     vTaskDelete(NULL);
 }

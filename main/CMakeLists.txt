@@ -4,15 +4,15 @@ idf_component_register(
         "zw_nvs.c"
         "zw_wifi.c"
         "zw_ble.c"
-        "zw_provision.c"
         "zw_api.c"
+        "zw_geolocate.c"
         "zw_ui.c"
         "ui_team_select.c"
-        "ui_dashboard.c"
-        "ui_capture.c"
-        "ui_add_marker.c"
-        "ui_marker_list.c"
+        "ui_team_mgmt.c"
+        "ui_settings.c"
+        "ui_exit_confirm.c"
         "ui_wifi_config.c"
+        "ui_wifi_select.c"
     INCLUDE_DIRS "."
     REQUIRES
         bsp
@@ -23,6 +23,7 @@ idf_component_register(
         esp_http_client
         esp_http_server
         esp_timer
+        esp-tls
         bt
         lvgl
         json

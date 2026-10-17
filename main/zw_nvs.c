@@ -78,13 +78,18 @@ esp_err_t zw_nvs_save_team(int team) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
-    
+
     err = nvs_set_i32(handle, "team", team);
     if (err == ESP_OK) err = nvs_commit(handle);
-    
+
     nvs_close(handle);
     ESP_LOGI(TAG, "Saved team: %d", team);
     return err;
+}
+
+esp_err_t zw_nvs_clear_team(void) {
+    ESP_LOGI(TAG, "Clearing team (exit team)");
+    return zw_nvs_save_team(ZW_TEAM_NONE);
 }
 
 esp_err_t zw_nvs_save_wifi(const char *ssid, const char *password) {
