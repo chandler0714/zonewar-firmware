@@ -130,6 +130,15 @@ static void refresh_labels(void) {
         }
         lv_label_set_text(s_coord_label, buf);
     }
+
+    // 滚动范围随坐标列表高度动态伸缩：刷新布局后校正滚动位置。
+    // 列表增长（新打点）→ 可下滑更多；三点成领地列表清空 → 自动复位到顶部
+    lv_obj_update_layout(s_content);
+    int32_t max_scroll = lv_obj_get_scroll_bottom(s_content);
+    if (s_scroll_y > max_scroll) {
+        s_scroll_y = max_scroll;
+        lv_obj_scroll_to_y(s_content, s_scroll_y, LV_ANIM_OFF);
+    }
 }
 
 // 同步任务：
@@ -353,6 +362,8 @@ void ui_team_mgmt_enter(void) {
     lv_obj_set_flex_flow(s_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_all(s_content, 2, 0);
+    // 底部预留 50px 滚动余量：最后一项可继续上滑，避开底栏状态/按键提示区域
+    lv_obj_set_style_pad_bottom(s_content, 50, 0);
     lv_obj_set_style_pad_row(s_content, 8, 0);
     lv_obj_set_scrollbar_mode(s_content, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_scroll_elastic(s_content, false);
@@ -462,12 +473,14 @@ void ui_team_mgmt_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     if (ev != BSP_BTN_CLICK) return;
 
     if (btn == BSP_BTN_UP || btn == BSP_BTN_DOWN) {
-        // 上下滚动查看长内容
+        // 上下滚动查看长内容（LVGL 滚动偏移向下为正）
         if (!s_content) return;
         if (btn == BSP_BTN_UP) s_scroll_y -= SCROLL_STEP;
         else s_scroll_y += SCROLL_STEP;
         if (s_scroll_y < 0) s_scroll_y = 0;
-        lv_obj_scroll_to_y(s_content, -s_scroll_y, LV_ANIM_ON);
+        int32_t max_scroll = lv_obj_get_scroll_bottom(s_content);
+        if (s_scroll_y > max_scroll) s_scroll_y = max_scroll;
+        lv_obj_scroll_to_y(s_content, s_scroll_y, LV_ANIM_ON);
     } else if (btn == BSP_BTN_OK) {
         // OK：通过 BLE 通知手机立即打点上报，等待后拉取刷新坐标列表
         if (s_sync_running) return;  // 上一轮打点/同步未完成，忽略连按
